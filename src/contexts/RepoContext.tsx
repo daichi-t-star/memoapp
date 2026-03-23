@@ -39,6 +39,7 @@ interface RepoContextValue {
   closeFile: () => void;
   saveFile: (content: string) => Promise<void>;
   createFile: (path: string, content: string) => Promise<void>;
+  renameFile: (newBaseName: string) => Promise<void>;
   deleteCurrentFile: () => Promise<void>;
   refreshTree: () => Promise<void>;
   setDirty: (d: boolean) => void;
@@ -64,13 +65,14 @@ export function RepoProvider({ children }: { children: ReactNode }) {
   const [repos, setRepos] = useState<GitHubRepo[]>([]);
   const [reposLoading, setReposLoading] = useState(false);
 
-  const saved = loadSavedRepo();
   const [selectedOwner, setSelectedOwner] = useState<string>(
-    saved?.owner || '',
+    () => loadSavedRepo()?.owner || '',
   );
-  const [selectedRepo, setSelectedRepo] = useState<string>(saved?.repo || '');
+  const [selectedRepo, setSelectedRepo] = useState<string>(
+    () => loadSavedRepo()?.repo || '',
+  );
   const [selectedBranch, setSelectedBranch] = useState<string>(
-    saved?.branch || '',
+    () => loadSavedRepo()?.branch || '',
   );
 
   const [tree, setTree] = useState<TreeNode[]>([]);
@@ -358,6 +360,59 @@ export function RepoProvider({ children }: { children: ReactNode }) {
     loadTree,
   ]);
 
+  const renameFile = useCallback(
+    async (newBaseName: string) => {
+      if (!client || !currentFile) return;
+      const dir = currentFile.path.includes('/')
+        ? currentFile.path.slice(0, currentFile.path.lastIndexOf('/'))
+        : '';
+      const newPath = dir ? `${dir}/${newBaseName}.md` : `${newBaseName}.md`;
+      if (newPath === currentFile.path) return;
+
+      setSaving(true);
+      setError(null);
+      try {
+        await client.putFile(
+          selectedOwner,
+          selectedRepo,
+          newPath,
+          currentFile.content,
+          `Rename ${currentFile.path} → ${newPath}`,
+          undefined,
+          selectedBranch,
+        );
+        await client.deleteFile(
+          selectedOwner,
+          selectedRepo,
+          currentFile.path,
+          currentFile.sha,
+          `Rename ${currentFile.path} → ${newPath}`,
+          selectedBranch,
+        );
+        setContentCache((prev) => {
+          const next = new Map(prev);
+          next.delete(currentFile.path);
+          return next;
+        });
+        await loadTree();
+        await openFile(newPath);
+      } catch (e: any) {
+        setError(e.message);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [
+      client,
+      currentFile,
+      selectedOwner,
+      selectedRepo,
+      selectedBranch,
+      loadTree,
+      openFile,
+    ],
+  );
+
   const clearError = useCallback(() => setError(null), []);
 
   return (
@@ -385,6 +440,7 @@ export function RepoProvider({ children }: { children: ReactNode }) {
         closeFile,
         saveFile,
         createFile,
+        renameFile,
         deleteCurrentFile,
         refreshTree: loadTree,
         setDirty,

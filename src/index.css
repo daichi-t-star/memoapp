@@ -692,12 +692,55 @@ body {
   background: #fef2f2 !important;
 }
 
+.editor-filename-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition);
+  min-width: 0;
+  max-width: 240px;
+}
+
+.editor-filename-btn:hover {
+  background: var(--color-bg-tertiary);
+}
+
 .editor-filename {
   font-size: 14px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.editor-filename-edit-icon {
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+
+.editor-filename-btn:hover .editor-filename-edit-icon {
+  opacity: 1;
+}
+
+.editor-rename-input {
+  font-size: 14px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-accent-light);
+  max-width: 240px;
+  min-width: 100px;
 }
 
 .editor-dirty {

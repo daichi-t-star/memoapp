@@ -24,6 +24,9 @@ export function RepoSelector() {
   const currentValue =
     selectedOwner && selectedRepo ? `${selectedOwner}/${selectedRepo}` : '';
 
+  const hasCurrentInList =
+    currentValue && repos.some((r) => r.full_name === currentValue);
+
   return (
     <div className="repo-selector">
       <div className="repo-selector-field">
@@ -36,6 +39,9 @@ export function RepoSelector() {
           <option value="">
             {reposLoading ? 'Loading repos...' : 'Select repository'}
           </option>
+          {!hasCurrentInList && currentValue && (
+            <option value={currentValue}>{currentValue}</option>
+          )}
           {repos.map((r) => (
             <option key={r.full_name} value={r.full_name}>
               {r.full_name}

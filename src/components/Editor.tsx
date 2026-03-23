@@ -5,7 +5,15 @@ import { markdown } from '@codemirror/lang-markdown';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { parseFrontmatter } from '../lib/frontmatter';
-import { ArrowLeft, Save, Eye, Code, Trash2, Loader } from 'lucide-react';
+import {
+  ArrowLeft,
+  Save,
+  Eye,
+  Code,
+  Trash2,
+  Loader,
+  Pencil,
+} from 'lucide-react';
 
 export function Editor() {
   const {
@@ -15,12 +23,16 @@ export function Editor() {
     dirty,
     saveFile,
     closeFile,
+    renameFile,
     deleteCurrentFile,
     setDirty,
   } = useRepo();
   const [content, setContent] = useState('');
   const [mode, setMode] = useState<'edit' | 'preview'>('edit');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const contentRef = useRef(content);
   contentRef.current = content;
 
@@ -28,6 +40,7 @@ export function Editor() {
     if (currentFile) {
       setContent(currentFile.content);
       setDirty(false);
+      setRenaming(false);
     }
   }, [currentFile?.path, currentFile?.sha]);
 
@@ -54,6 +67,43 @@ export function Editor() {
     return () => window.removeEventListener('keydown', handler);
   }, [dirty, handleSave]);
 
+  const startRename = useCallback(() => {
+    if (!currentFile) return;
+    const baseName =
+      currentFile.path.split('/').pop()?.replace(/\.md$/, '') || '';
+    setRenameValue(baseName);
+    setRenaming(true);
+    setTimeout(() => renameInputRef.current?.select(), 0);
+  }, [currentFile]);
+
+  const commitRename = useCallback(async () => {
+    const trimmed = renameValue.trim();
+    if (
+      !trimmed ||
+      trimmed.includes('/') ||
+      trimmed === '..' ||
+      trimmed === '.'
+    ) {
+      setRenaming(false);
+      return;
+    }
+    const currentBase =
+      currentFile?.path.split('/').pop()?.replace(/\.md$/, '') || '';
+    if (trimmed === currentBase) {
+      setRenaming(false);
+      return;
+    }
+    if (dirty) {
+      await saveFile(contentRef.current);
+    }
+    setRenaming(false);
+    await renameFile(trimmed);
+  }, [renameValue, currentFile, dirty, saveFile, renameFile]);
+
+  const cancelRename = useCallback(() => {
+    setRenaming(false);
+  }, []);
+
   if (fileLoading) {
     return (
       <div className="editor-loading">
@@ -74,7 +124,33 @@ export function Editor() {
         <button className="editor-toolbar-btn" onClick={closeFile} title="Back">
           <ArrowLeft size={18} />
         </button>
-        <span className="editor-filename">{fileName}</span>
+        {renaming ? (
+          <input
+            ref={renameInputRef}
+            className="editor-rename-input"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                commitRename();
+              } else if (e.key === 'Escape') {
+                cancelRename();
+              }
+            }}
+            onBlur={cancelRename}
+            disabled={saving}
+          />
+        ) : (
+          <button
+            className="editor-filename-btn"
+            onClick={startRename}
+            title="Rename"
+          >
+            <span className="editor-filename">{fileName}</span>
+            <Pencil size={12} className="editor-filename-edit-icon" />
+          </button>
+        )}
         {dirty && <span className="editor-dirty">&bull;</span>}
         <div className="editor-toolbar-spacer" />
         <div className="editor-mode-toggle">
