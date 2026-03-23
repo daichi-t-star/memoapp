@@ -1,0 +1,16 @@
+{
+  "name": "MemoApp",
+  "short_name": "MemoApp",
+  "description": "GitHub-synced Markdown note manager",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#6366f1",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
