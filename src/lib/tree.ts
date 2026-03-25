@@ -10,7 +10,11 @@ export function buildTree(items: GitHubTreeItem[]): TreeNode[] {
   };
 
   const mdFiles = items.filter(
-    (i) => i.type === 'blob' && i.path.endsWith('.md'),
+    (i) =>
+      i.type === 'blob' &&
+      i.path.endsWith('.md') &&
+      !i.path.startsWith('.trash/') &&
+      i.path !== '.trash',
   );
 
   for (const file of mdFiles) {
