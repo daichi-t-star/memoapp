@@ -97,6 +97,23 @@ export class GitHubClient {
     );
   }
 
+  async getFileLastCommitDate(
+    owner: string,
+    repo: string,
+    path: string,
+    branch: string,
+  ): Promise<string | null> {
+    try {
+      const encodedPath = encodePath(path);
+      const commits = await this.request<{ commit: { committer: { date: string } } }[]>(
+        `/repos/${owner}/${repo}/commits?path=${encodedPath}&sha=${encodeURIComponent(branch)}&per_page=1`,
+      );
+      return commits.length > 0 ? commits[0].commit.committer.date : null;
+    } catch {
+      return null;
+    }
+  }
+
   async deleteFile(
     owner: string,
     repo: string,

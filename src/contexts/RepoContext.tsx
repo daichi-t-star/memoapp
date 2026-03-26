@@ -33,6 +33,7 @@ interface RepoContextValue {
   dirty: boolean;
   saving: boolean;
   prefetching: boolean;
+  dateCache: Map<string, string | null>;
   error: string | null;
   selectRepo: (owner: string, repo: string, branch: string) => void;
   openFile: (path: string) => Promise<void>;
@@ -86,12 +87,17 @@ export function RepoProvider({ children }: { children: ReactNode }) {
   const [contentCache, setContentCache] = useState<
     Map<string, { content: string; sha: string }>
   >(new Map());
+  const [dateCache, setDateCache] = useState<Map<string, string | null>>(
+    new Map(),
+  );
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(
     null,
   );
 
   const contentCacheRef = useRef(contentCache);
   contentCacheRef.current = contentCache;
+  const dateCacheRef = useRef(dateCache);
+  dateCacheRef.current = dateCache;
 
   useEffect(() => {
     if (!client) return;
@@ -134,7 +140,11 @@ export function RepoProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     const allFiles = flattenMdFiles(tree);
     const toFetch = allFiles
-      .filter((f) => !contentCacheRef.current.has(f.path))
+      .filter(
+        (f) =>
+          !contentCacheRef.current.has(f.path) ||
+          !dateCacheRef.current.has(f.path),
+      )
       .slice(0, MAX_PREFETCH);
 
     if (toFetch.length === 0) return;
@@ -149,19 +159,38 @@ export function RepoProvider({ children }: { children: ReactNode }) {
         if (fileIdx >= toFetch.length) break;
         const file = toFetch[fileIdx];
         try {
-          const data = await client!.getFileContent(
-            selectedOwner,
-            selectedRepo,
-            file.path,
-            selectedBranch,
-          );
+          const [data, commitDate] = await Promise.all([
+            contentCacheRef.current.has(file.path)
+              ? Promise.resolve(null)
+              : client!.getFileContent(
+                  selectedOwner,
+                  selectedRepo,
+                  file.path,
+                  selectedBranch,
+                ),
+            dateCacheRef.current.has(file.path)
+              ? Promise.resolve(undefined)
+              : client!.getFileLastCommitDate(
+                  selectedOwner,
+                  selectedRepo,
+                  file.path,
+                  selectedBranch,
+                ),
+          ]);
           if (!cancelled) {
-            setContentCache((prev) =>
-              new Map(prev).set(file.path, {
-                content: data.decodedContent,
-                sha: data.sha,
-              }),
-            );
+            if (data) {
+              setContentCache((prev) =>
+                new Map(prev).set(file.path, {
+                  content: data.decodedContent,
+                  sha: data.sha,
+                }),
+              );
+            }
+            if (commitDate !== undefined) {
+              setDateCache((prev) =>
+                new Map(prev).set(file.path, commitDate),
+              );
+            }
           }
         } catch {
           // skip individual errors
@@ -188,7 +217,7 @@ export function RepoProvider({ children }: { children: ReactNode }) {
   const folderPaths = useMemo(() => collectFolderPaths(tree), [tree]);
 
   const notes = useMemo<NoteMeta[]>(() => {
-    return flattenMdFiles(tree).map((node) => {
+    const list = flattenMdFiles(tree).map((node) => {
       const cached = contentCache.get(node.path);
       let title = node.name.replace(/\.md$/, '');
       let tags: string[] = [];
@@ -201,9 +230,17 @@ export function RepoProvider({ children }: { children: ReactNode }) {
         excerpt = extractExcerpt(cached.content);
       }
 
-      return { title, tags, excerpt, path: node.path, sha: node.sha };
+      const updatedAt = dateCache.get(node.path) ?? null;
+      return { title, tags, excerpt, path: node.path, sha: node.sha, updatedAt };
     });
-  }, [tree, contentCache]);
+    list.sort((a, b) => {
+      if (!a.updatedAt && !b.updatedAt) return 0;
+      if (!a.updatedAt) return 1;
+      if (!b.updatedAt) return -1;
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    });
+    return list;
+  }, [tree, contentCache, dateCache]);
 
   const selectRepo = useCallback(
     (owner: string, repo: string, branch: string) => {
@@ -213,6 +250,7 @@ export function RepoProvider({ children }: { children: ReactNode }) {
       setCurrentFile(null);
       setDirty(false);
       setContentCache(new Map());
+      setDateCache(new Map());
       setSelectedFolderPath(null);
       localStorage.setItem(
         REPO_KEY,
@@ -434,6 +472,7 @@ export function RepoProvider({ children }: { children: ReactNode }) {
         dirty,
         saving,
         prefetching,
+        dateCache,
         error,
         selectRepo,
         openFile,

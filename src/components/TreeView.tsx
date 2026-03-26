@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useRepo } from '../contexts/RepoContext';
 import type { TreeNode } from '../types';
 import {
@@ -21,7 +21,41 @@ export function TreeView({ onSelect }: TreeViewProps) {
     openFile,
     selectedFolderPath,
     setSelectedFolderPath,
+    dateCache,
   } = useRepo();
+
+  const getNewestDate = useCallback(
+    (node: TreeNode): string | null => {
+      if (node.type === 'file') return dateCache.get(node.path) ?? null;
+      if (!node.children) return null;
+      let newest: string | null = null;
+      for (const child of node.children) {
+        const d = getNewestDate(child);
+        if (d && (!newest || d > newest)) newest = d;
+      }
+      return newest;
+    },
+    [dateCache],
+  );
+
+  const sortedTree = useMemo(() => {
+    function sortNodes(nodes: TreeNode[]): TreeNode[] {
+      const sorted = nodes.map((n) =>
+        n.children ? { ...n, children: sortNodes(n.children) } : n,
+      );
+      sorted.sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+        const da = getNewestDate(a);
+        const db = getNewestDate(b);
+        if (!da && !db) return a.name.localeCompare(b.name);
+        if (!da) return 1;
+        if (!db) return -1;
+        return db.localeCompare(da);
+      });
+      return sorted;
+    }
+    return sortNodes(tree);
+  }, [tree, getNewestDate]);
 
   if (treeLoading) {
     return (
@@ -38,7 +72,7 @@ export function TreeView({ onSelect }: TreeViewProps) {
 
   return (
     <div className="tree-view">
-      {tree.map((node) => (
+      {sortedTree.map((node) => (
         <TreeItem
           key={node.path}
           node={node}

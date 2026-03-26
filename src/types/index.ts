@@ -20,6 +20,7 @@ export interface NoteMeta {
   excerpt: string;
   path: string;
   sha: string;
+  updatedAt: string | null;
 }
 
 export interface FileContent {
