@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useRepo } from '../contexts/RepoContext';
 import type { TreeNode } from '../types';
 import {
@@ -45,6 +45,7 @@ export function TreeView({ onSelect }: TreeViewProps) {
       );
       sorted.sort((a, b) => {
         if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+        if (a.type === 'dir') return a.name.localeCompare(b.name);
         const da = getNewestDate(a);
         const db = getNewestDate(b);
         if (!da && !db) return a.name.localeCompare(b.name);
@@ -112,6 +113,15 @@ function TreeItem({
   onSelectFolder,
 }: TreeItemProps) {
   const [expanded, setExpanded] = useState(depth < 1);
+
+  const containsCurrent =
+    node.type === 'dir' &&
+    !!currentPath &&
+    currentPath.startsWith(node.path + '/');
+
+  useEffect(() => {
+    if (containsCurrent) setExpanded(true);
+  }, [containsCurrent]);
 
   const isActive = node.path === currentPath;
   const isFolderSelected =

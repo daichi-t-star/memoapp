@@ -9,7 +9,13 @@ import {
   type ReactNode,
 } from 'react';
 import { useAuth } from './AuthContext';
-import { buildTree, flattenMdFiles, collectFolderPaths } from '../lib/tree';
+import {
+  buildTree,
+  flattenMdFiles,
+  collectFolderPaths,
+  insertFileIntoTree,
+  removeFileFromTree,
+} from '../lib/tree';
 import { parseFrontmatter, extractExcerpt } from '../lib/frontmatter';
 import type { TreeNode, NoteMeta, FileContent, GitHubRepo } from '../types';
 
@@ -17,6 +23,7 @@ const MAX_PREFETCH = 200;
 const PREFETCH_CONCURRENCY = 5;
 
 interface RepoContextValue {
+  client: import('../lib/github').GitHubClient | null;
   repos: GitHubRepo[];
   reposLoading: boolean;
   selectedOwner: string;
@@ -36,6 +43,7 @@ interface RepoContextValue {
   dateCache: Map<string, string | null>;
   error: string | null;
   selectRepo: (owner: string, repo: string, branch: string) => void;
+  uploadImage: (file: File) => Promise<string>;
   openFile: (path: string) => Promise<void>;
   closeFile: () => void;
   saveFile: (content: string) => Promise<void>;
@@ -50,6 +58,7 @@ interface RepoContextValue {
 const RepoContext = createContext<RepoContextValue | null>(null);
 
 const REPO_KEY = 'memoapp_selected_repo';
+const PIN_TTL_MS = 60_000;
 
 function loadSavedRepo() {
   try {
@@ -57,6 +66,44 @@ function loadSavedRepo() {
     return saved ? JSON.parse(saved) : null;
   } catch {
     return null;
+  }
+}
+
+function pinKey(owner: string, repo: string, branch: string) {
+  return `memoapp_pinned_sha:${owner}/${repo}/${branch}`;
+}
+
+function getPinnedSha(
+  owner: string,
+  repo: string,
+  branch: string,
+): string | undefined {
+  if (!owner || !repo || !branch) return undefined;
+  try {
+    const raw = localStorage.getItem(pinKey(owner, repo, branch));
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as { sha: string; ts: number };
+    if (Date.now() - parsed.ts > PIN_TTL_MS) return undefined;
+    return parsed.sha;
+  } catch {
+    return undefined;
+  }
+}
+
+function setPinnedSha(
+  owner: string,
+  repo: string,
+  branch: string,
+  sha: string,
+) {
+  if (!owner || !repo || !branch) return;
+  try {
+    localStorage.setItem(
+      pinKey(owner, repo, branch),
+      JSON.stringify({ sha, ts: Date.now() }),
+    );
+  } catch {
+    // ignore quota errors
   }
 }
 
@@ -109,24 +156,50 @@ export function RepoProvider({ children }: { children: ReactNode }) {
       .finally(() => setReposLoading(false));
   }, [client]);
 
-  const loadTree = useCallback(async () => {
-    if (!client || !selectedOwner || !selectedRepo || !selectedBranch) return;
-    setTreeLoading(true);
-    setError(null);
-    try {
-      const data = await client.getTree(
-        selectedOwner,
-        selectedRepo,
-        selectedBranch,
-      );
-      setTree(buildTree(data.tree));
-    } catch (e: any) {
-      setError(e.message);
-      setTree([]);
-    } finally {
-      setTreeLoading(false);
-    }
-  }, [client, selectedOwner, selectedRepo, selectedBranch]);
+  const loadTreeInternal = useCallback(
+    async (forceFresh: boolean) => {
+      if (!client || !selectedOwner || !selectedRepo || !selectedBranch)
+        return;
+      setTreeLoading(true);
+      setError(null);
+      try {
+        const pinned = forceFresh
+          ? undefined
+          : getPinnedSha(selectedOwner, selectedRepo, selectedBranch);
+        const data = await client.getTree(
+          selectedOwner,
+          selectedRepo,
+          selectedBranch,
+          pinned,
+        );
+        setTree(buildTree(data.tree));
+        if (forceFresh) {
+          setPinnedSha(
+            selectedOwner,
+            selectedRepo,
+            selectedBranch,
+            data.commitSha,
+          );
+        }
+      } catch (e: any) {
+        setError(e.message);
+        setTree([]);
+      } finally {
+        setTreeLoading(false);
+      }
+    },
+    [client, selectedOwner, selectedRepo, selectedBranch],
+  );
+
+  const loadTree = useCallback(
+    () => loadTreeInternal(false),
+    [loadTreeInternal],
+  );
+
+  const refreshTree = useCallback(
+    () => loadTreeInternal(true),
+    [loadTreeInternal],
+  );
 
   useEffect(() => {
     loadTree();
@@ -323,6 +396,12 @@ export function RepoProvider({ children }: { children: ReactNode }) {
             new Map(prev).set(currentFile.path, { content, sha: newSha }),
         );
         setTree((prev) => updateTreeSha(prev, currentFile.path, newSha));
+        setPinnedSha(
+          selectedOwner,
+          selectedRepo,
+          selectedBranch,
+          res.commit.sha,
+        );
       } catch (e: any) {
         if (e.status === 409) {
           setError(
@@ -344,7 +423,7 @@ export function RepoProvider({ children }: { children: ReactNode }) {
       setSaving(true);
       setError(null);
       try {
-        await client.putFile(
+        const res = await client.putFile(
           selectedOwner,
           selectedRepo,
           path,
@@ -353,14 +432,31 @@ export function RepoProvider({ children }: { children: ReactNode }) {
           undefined,
           selectedBranch,
         );
-        await loadTree();
+        const newSha = res.content.sha;
+
+        setTree((prev) => insertFileIntoTree(prev, path, newSha));
+        setContentCache((prev) =>
+          new Map(prev).set(path, { content, sha: newSha }),
+        );
+        setDateCache((prev) =>
+          new Map(prev).set(path, new Date().toISOString()),
+        );
+        setCurrentFile({ path, content, sha: newSha });
+        setDirty(false);
+        setPinnedSha(
+          selectedOwner,
+          selectedRepo,
+          selectedBranch,
+          res.commit.sha,
+        );
       } catch (e: any) {
         setError(e.message);
+        throw e;
       } finally {
         setSaving(false);
       }
     },
-    [client, selectedOwner, selectedRepo, selectedBranch, loadTree],
+    [client, selectedOwner, selectedRepo, selectedBranch],
   );
 
   const deleteCurrentFile = useCallback(async () => {
@@ -368,7 +464,7 @@ export function RepoProvider({ children }: { children: ReactNode }) {
     setSaving(true);
     setError(null);
     try {
-      await client.deleteFile(
+      const delRes = await client.deleteFile(
         selectedOwner,
         selectedRepo,
         currentFile.path,
@@ -376,14 +472,26 @@ export function RepoProvider({ children }: { children: ReactNode }) {
         `Delete ${currentFile.path}`,
         selectedBranch,
       );
+      const deletedPath = currentFile.path;
+      setPinnedSha(
+        selectedOwner,
+        selectedRepo,
+        selectedBranch,
+        delRes.commit.sha,
+      );
       setCurrentFile(null);
       setDirty(false);
       setContentCache((prev) => {
         const next = new Map(prev);
-        next.delete(currentFile.path);
+        next.delete(deletedPath);
         return next;
       });
-      await loadTree();
+      setDateCache((prev) => {
+        const next = new Map(prev);
+        next.delete(deletedPath);
+        return next;
+      });
+      setTree((prev) => removeFileFromTree(prev, deletedPath));
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -395,7 +503,6 @@ export function RepoProvider({ children }: { children: ReactNode }) {
     selectedOwner,
     selectedRepo,
     selectedBranch,
-    loadTree,
   ]);
 
   const renameFile = useCallback(
@@ -410,7 +517,7 @@ export function RepoProvider({ children }: { children: ReactNode }) {
       setSaving(true);
       setError(null);
       try {
-        await client.putFile(
+        const putRes = await client.putFile(
           selectedOwner,
           selectedRepo,
           newPath,
@@ -419,7 +526,7 @@ export function RepoProvider({ children }: { children: ReactNode }) {
           undefined,
           selectedBranch,
         );
-        await client.deleteFile(
+        const delRes = await client.deleteFile(
           selectedOwner,
           selectedRepo,
           currentFile.path,
@@ -427,28 +534,103 @@ export function RepoProvider({ children }: { children: ReactNode }) {
           `Rename ${currentFile.path} → ${newPath}`,
           selectedBranch,
         );
+        setPinnedSha(
+          selectedOwner,
+          selectedRepo,
+          selectedBranch,
+          delRes.commit.sha,
+        );
+        const newSha = putRes.content.sha;
+        const oldPath = currentFile.path;
+        const renamedContent = currentFile.content;
         setContentCache((prev) => {
           const next = new Map(prev);
-          next.delete(currentFile.path);
+          next.delete(oldPath);
+          next.set(newPath, { content: renamedContent, sha: newSha });
           return next;
         });
-        await loadTree();
-        await openFile(newPath);
+        setDateCache((prev) => {
+          const next = new Map(prev);
+          const oldDate = next.get(oldPath);
+          next.delete(oldPath);
+          next.set(newPath, oldDate ?? new Date().toISOString());
+          return next;
+        });
+        setTree((prev) =>
+          insertFileIntoTree(removeFileFromTree(prev, oldPath), newPath, newSha),
+        );
+        setCurrentFile({ path: newPath, content: renamedContent, sha: newSha });
+        setDirty(false);
       } catch (e: any) {
         setError(e.message);
       } finally {
         setSaving(false);
       }
     },
-    [
-      client,
-      currentFile,
-      selectedOwner,
-      selectedRepo,
-      selectedBranch,
-      loadTree,
-      openFile,
-    ],
+    [client, currentFile, selectedOwner, selectedRepo, selectedBranch],
+  );
+
+  const uploadImage = useCallback(
+    async (file: File): Promise<string> => {
+      if (!client) throw new Error('Not connected');
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          resolve(result.split(',')[1]);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const currentDir = currentFile?.path.includes('/')
+        ? currentFile.path.slice(0, currentFile.path.lastIndexOf('/'))
+        : '';
+      const imagesDir = currentDir ? `${currentDir}/images` : 'images';
+      const imagePath = `${imagesDir}/${file.name}`;
+      setSaving(true);
+      setError(null);
+      try {
+        try {
+          await client.putBinaryFile(
+            selectedOwner,
+            selectedRepo,
+            imagePath,
+            base64,
+            `Add image ${imagePath}`,
+            undefined,
+            selectedBranch,
+          );
+        } catch (firstErr: any) {
+          if (firstErr.status === 422 || firstErr.message?.includes('sha')) {
+            const existingSha = await client.getFileSha(
+              selectedOwner,
+              selectedRepo,
+              imagePath,
+              selectedBranch,
+            );
+            if (!existingSha) throw firstErr;
+            await client.putBinaryFile(
+              selectedOwner,
+              selectedRepo,
+              imagePath,
+              base64,
+              `Update image ${imagePath}`,
+              existingSha,
+              selectedBranch,
+            );
+          } else {
+            throw firstErr;
+          }
+        }
+        return imagePath;
+      } catch (e: any) {
+        setError(e.message);
+        throw e;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [client, selectedOwner, selectedRepo, selectedBranch, currentFile],
   );
 
   const clearError = useCallback(() => setError(null), []);
@@ -456,6 +638,7 @@ export function RepoProvider({ children }: { children: ReactNode }) {
   return (
     <RepoContext.Provider
       value={{
+        client,
         repos,
         reposLoading,
         selectedOwner,
@@ -475,13 +658,14 @@ export function RepoProvider({ children }: { children: ReactNode }) {
         dateCache,
         error,
         selectRepo,
+        uploadImage,
         openFile,
         closeFile,
         saveFile,
         createFile,
         renameFile,
         deleteCurrentFile,
-        refreshTree: loadTree,
+        refreshTree,
         setDirty,
         clearError,
       }}

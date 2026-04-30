@@ -811,6 +811,10 @@ body {
   height: 100%;
 }
 
+.editor-preview--clickable {
+  cursor: text;
+}
+
 /* ---- Markdown body ---- */
 
 .markdown-body h1 {

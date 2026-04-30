@@ -17,8 +17,12 @@ export function CreateNoteDialog({ onClose }: CreateNoteDialogProps) {
     if (!base || base.includes('/') || base === '..' || base === '.') return;
     const filePath = folder ? `${folder}/${base}.md` : `${base}.md`;
     const content = `---\ntitle: ${base}\ncreated: ${new Date().toISOString()}\ntags: []\n---\n\n# ${base}\n\n`;
-    await createFile(filePath, content);
-    onClose();
+    try {
+      await createFile(filePath, content);
+      onClose();
+    } catch {
+      // エラーは context.error に表示される
+    }
   };
 
   return (

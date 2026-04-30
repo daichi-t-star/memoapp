@@ -70,6 +70,72 @@ export function collectFolderPaths(nodes: TreeNode[]): string[] {
   return paths.sort();
 }
 
+export function insertFileIntoTree(
+  nodes: TreeNode[],
+  path: string,
+  sha: string,
+): TreeNode[] {
+  const root: TreeNode = {
+    name: '',
+    path: '',
+    type: 'dir',
+    sha: '',
+    children: nodes.map(cloneNode),
+  };
+
+  const parts = path.split('/');
+  let current = root;
+  for (let i = 0; i < parts.length; i++) {
+    const name = parts[i];
+    const nodePath = parts.slice(0, i + 1).join('/');
+    const isFile = i === parts.length - 1;
+
+    if (!current.children) current.children = [];
+    let child = current.children.find((c) => c.name === name);
+    if (!child) {
+      child = {
+        name,
+        path: nodePath,
+        type: isFile ? 'file' : 'dir',
+        sha: isFile ? sha : '',
+        children: isFile ? undefined : [],
+      };
+      current.children.push(child);
+    } else if (isFile) {
+      child.sha = sha;
+    }
+    current = child;
+  }
+
+  sortTree(root.children!);
+  return root.children!;
+}
+
+export function removeFileFromTree(
+  nodes: TreeNode[],
+  path: string,
+): TreeNode[] {
+  const result: TreeNode[] = [];
+  for (const node of nodes) {
+    if (node.path === path && node.type === 'file') continue;
+    if (node.children) {
+      const newChildren = removeFileFromTree(node.children, path);
+      if (node.type === 'dir' && newChildren.length === 0) continue;
+      result.push({ ...node, children: newChildren });
+    } else {
+      result.push(node);
+    }
+  }
+  return result;
+}
+
+function cloneNode(node: TreeNode): TreeNode {
+  return {
+    ...node,
+    children: node.children ? node.children.map(cloneNode) : undefined,
+  };
+}
+
 export function flattenMdFiles(nodes: TreeNode[]): TreeNode[] {
   const result: TreeNode[] = [];
   function walk(list: TreeNode[]) {

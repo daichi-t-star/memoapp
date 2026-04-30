@@ -14,6 +14,7 @@ export class GitHubClient {
 
   private async request<T>(path: string, options?: RequestInit): Promise<T> {
     const res = await fetch(`${API_BASE}${path}`, {
+      cache: 'no-store',
       ...options,
       headers: {
         Authorization: `Bearer ${this.token}`,
@@ -44,13 +45,21 @@ export class GitHubClient {
     owner: string,
     repo: string,
     branch: string,
-  ): Promise<{ sha: string; tree: GitHubTreeItem[] }> {
-    const ref = await this.request<{ object: { sha: string } }>(
-      `/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`,
+    pinnedSha?: string,
+  ): Promise<{ sha: string; tree: GitHubTreeItem[]; commitSha: string }> {
+    let commitSha: string;
+    if (pinnedSha) {
+      commitSha = pinnedSha;
+    } else {
+      const ref = await this.request<{ object: { sha: string } }>(
+        `/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`,
+      );
+      commitSha = ref.object.sha;
+    }
+    const data = await this.request<{ sha: string; tree: GitHubTreeItem[] }>(
+      `/repos/${owner}/${repo}/git/trees/${commitSha}?recursive=1`,
     );
-    return this.request(
-      `/repos/${owner}/${repo}/git/trees/${ref.object.sha}?recursive=1`,
-    );
+    return { ...data, commitSha };
   }
 
   async getFileContent(
@@ -91,7 +100,10 @@ export class GitHubClient {
     };
     if (sha) body.sha = sha;
     if (branch) body.branch = branch;
-    return this.request<{ content: { sha: string; path: string } }>(
+    return this.request<{
+      content: { sha: string; path: string };
+      commit: { sha: string };
+    }>(
       `/repos/${owner}/${repo}/contents/${encodedPath}`,
       { method: 'PUT', body: JSON.stringify(body) },
     );
@@ -114,6 +126,66 @@ export class GitHubClient {
     }
   }
 
+  async getFileSha(
+    owner: string,
+    repo: string,
+    path: string,
+    ref?: string,
+  ): Promise<string | null> {
+    try {
+      const encodedPath = encodePath(path);
+      const query = ref ? `?ref=${encodeURIComponent(ref)}` : '';
+      const data = await this.request<{ sha: string }>(
+        `/repos/${owner}/${repo}/contents/${encodedPath}${query}`,
+      );
+      return data.sha;
+    } catch (e: any) {
+      if (e.status === 404) return null;
+      throw e;
+    }
+  }
+
+  async getImageBase64(
+    owner: string,
+    repo: string,
+    path: string,
+    ref?: string,
+  ): Promise<{ base64: string; sha: string }> {
+    const encodedPath = encodePath(path);
+    const query = ref ? `?ref=${encodeURIComponent(ref)}` : '';
+    const data = await this.request<{
+      content: string;
+      sha: string;
+      encoding: string;
+    }>(`/repos/${owner}/${repo}/contents/${encodedPath}${query}`);
+    return { base64: data.content.replace(/\s/g, ''), sha: data.sha };
+  }
+
+  async putBinaryFile(
+    owner: string,
+    repo: string,
+    path: string,
+    base64Content: string,
+    message: string,
+    sha?: string,
+    branch?: string,
+  ) {
+    const encodedPath = encodePath(path);
+    const body: Record<string, string> = {
+      message,
+      content: base64Content.replace(/\s/g, ''),
+    };
+    if (sha) body.sha = sha;
+    if (branch) body.branch = branch;
+    return this.request<{
+      content: { sha: string; path: string };
+      commit: { sha: string };
+    }>(
+      `/repos/${owner}/${repo}/contents/${encodedPath}`,
+      { method: 'PUT', body: JSON.stringify(body) },
+    );
+  }
+
   async deleteFile(
     owner: string,
     repo: string,
@@ -125,7 +197,7 @@ export class GitHubClient {
     const encodedPath = encodePath(path);
     const body: Record<string, string> = { message, sha };
     if (branch) body.branch = branch;
-    return this.request<void>(
+    return this.request<{ commit: { sha: string } }>(
       `/repos/${owner}/${repo}/contents/${encodedPath}`,
       { method: 'DELETE', body: JSON.stringify(body) },
     );
