@@ -1,16 +1,18 @@
 {
-  "name": "MemoApp",
-  "short_name": "MemoApp",
-  "description": "GitHub-synced Markdown note manager",
-  "start_url": "/",
+  "name": "memo. — あなたのメモと、毎日。",
+  "short_name": "memo.",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#6366f1",
+  "background_color": "#f7f9f8",
+  "theme_color": "#246d59",
+  "lang": "ja",
   "icons": [
     {
-      "src": "/icon.svg",
+      "src": "./icon.svg",
       "sizes": "any",
-      "type": "image/svg+xml"
+      "type": "image/svg+xml",
+      "purpose": "any"
     }
   ]
 }

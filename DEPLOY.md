@@ -1,48 +1,37 @@
-# ローカル開発サーバー
+# GitHub Pagesへの公開
 
-```bash
-npm run dev
+公開先: https://daichi-t-star.github.io/memoapp/
+配信ブランチ: `gh-pages` / root
+ソースの公開とGitHub Pages更新は別処理です。`vite.config.ts` の `base: '/memoapp/'` を維持してください。
+
+## 公開前
+
+```sh
+npm ci
+npm test
+npm run build
+npm run preview -- --host 127.0.0.1
 ```
 
-Vite の開発サーバーが起動し、`http://localhost:5173` でアクセスできます。
+`http://127.0.0.1:4173/memoapp/` で公開用ビルドを確認します。
 
-停止するにはターミナルで `Ctrl+C`。ローカル専用なので放置しても外部からアクセスされることはなく、リソース消費も軽微なため害はありません。
+- 新規メモと日本語入力、画像・ファイル添付、再読み込み後の保持
+- 設定・フォルダ・検索・ピン留め・ごみ箱からの復元
+- スマートフォン幅、初回オンライン訪問後のオフライン起動
+- GitHub同期の初回取り込み・新形式保存・別端末の読み取り（実データに対するテストには対象の確認が必要）
 
----
+## 公開
 
-# GitHub Pages 反映手順
+対象差分を確認してソースをコミットし、承認されたブランチへpushします。秘密ファイル `githubtoken`、`.env*`、メモの実データやローカルバックアップはステージしないでください。
 
-このプロジェクトは `gh-pages` ブランチに `dist` を公開して、GitHub Pages に配信しています。
-
-## 反映方法（ソース変更後）
-
-以下の順で実行します。
-
-```bash
-# 1) 変更をコミット
-git add .
-git commit -m "変更内容"
-
-# 2) main へ push
-git push origin main
-
-# 3) Pages 用の公開ブランチを更新
+```sh
 npm run deploy
 ```
 
-上記で自動的に以下が行われます。
+`predeploy` が公開用ビルドを作り、`dist` のみを `gh-pages` に公開します。既存のメモ用リポジトリを変更する操作ではありません。アプリ公開後、旧接続設定があるブラウザは旧メモを読み取り専用で取り込みます。新形式の保存は利用者が編集したメモだけです。
 
-- `npm run build` で `dist` を再生成
-- `dist` の内容を `gh-pages` ブランチへ公開
+公開後は配信HTMLのハッシュ付きJS/CSS、実画面、Service Workerを確認してください。2.0以降のService Worker更新は、開いているアプリのタブをすべて閉じて再度開くと新しいキャッシュへ切り替わります。`sw.js` 単体でなくビルド全体を一緒に公開してください。
 
-※ `git push origin main` と `npm run deploy` は別作業です。  
-`main` へ push しても自動では Pages 反映されないため、毎回 `npm run deploy` が必要です。
+## この実装時点の状態
 
-数分後に以下URLへ反映されます。
-
-- <https://daichi-t-star.github.io/memoapp/>
-
-## 注意
-
-- GitHub Pages 側の設定は `gh-pages` / `/ (root)` になっていること
-- `vite.config.ts` の `base` は `'/memoapp/'` のままにすること
+2.0のソース実装・17項目のテスト・ビルド・ローカルブラウザ確認は完了。現在のGitHub Pagesはまだ更新していません。GitHubへの実同期テストは、自動承認がテストファイル送信を拒否したため未実施です。
