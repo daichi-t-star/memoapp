@@ -21,7 +21,7 @@ export default defineConfig({
           type: "asset",
           fileName: "sw.js",
           source: `const CACHE=${JSON.stringify(version)};const ASSETS=${JSON.stringify(assets)};
-self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS)).then(()=>self.skipWaiting())));
+self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>Promise.all(ASSETS.map(async path=>{const response=await fetch(path+'?release='+encodeURIComponent(CACHE),{cache:'no-store'});if(!response.ok)throw new Error('Shell update failed');await cache.put(path,response);}))).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('memoapp-shell-')&&key!==CACHE).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',event=>{const url=new URL(event.request.url);if(event.request.method!=='GET'||url.origin!==self.location.origin)return;const path=event.request.mode==='navigate'&&url.pathname==='/memoapp/'?'/memoapp/':url.pathname;if(!ASSETS.includes(path))return;event.respondWith(caches.open(CACHE).then(async cache=>(await cache.match(path))||fetch(event.request)));});`,
         });
