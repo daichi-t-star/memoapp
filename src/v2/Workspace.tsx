@@ -47,6 +47,8 @@ import { AttachmentView } from "./AttachmentView";
 import { Settings } from "./Settings";
 import { download, exportBackup, importBackup } from "./backup";
 import { RichEditor, SourcePreview, type RichEditorHandle } from "./RichEditor";
+import { FolderNavigation } from "./FolderNavigation";
+import { SidebarResizer } from "./SidebarResizer";
 
 const viewNames: Record<string, string> = {
   all: "すべてのメモ",
@@ -190,6 +192,7 @@ export function Workspace({
   );
   const syncLock = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
@@ -203,6 +206,9 @@ export function Workspace({
     ...new Set(note?.text.match(/https?:\/\/[^\s<>"）)]+/g) || []),
   ];
   const active = state.notes.filter((n) => !n.deleted && !n.archived);
+  const folderCounts = new Map<string, number>();
+  for (const item of active)
+    folderCounts.set(item.folder, (folderCounts.get(item.folder) || 0) + 1);
   const folders = [
     ...new Set([
       ...customFolders,
@@ -474,7 +480,7 @@ export function Workspace({
     </button>
   );
   return (
-    <div className={`app-shell ${note ? "has-editor" : ""}`}>
+    <div ref={shellRef} className={`app-shell ${note ? "has-editor" : ""}`}>
       {sidebar && (
         <button
           className="sidebar-scrim"
@@ -554,18 +560,13 @@ export function Workspace({
           </button>
         </div>
         <nav className="folder-nav" aria-label="フォルダ">
-          {folders.map((folder, i) => (
-            <button
-              key={folder}
-              title={folder}
-              className={`nav-item ${view === `folder:${folder}` ? "active" : ""}`}
-              onClick={() => navigate(`folder:${folder}`)}
-            >
-              <Folder size={17} className={`folder-color-${i % 4}`} />
-              <span>{folder}</span>
-              <small>{active.filter((n) => n.folder === folder).length}</small>
-            </button>
-          ))}
+          <FolderNavigation
+            folders={folders}
+            counts={folderCounts}
+            scope={scope}
+            view={view}
+            navigate={navigate}
+          />
           {!folders.length && (
             <button
               className="add-folder"
@@ -621,6 +622,10 @@ export function Workspace({
           </div>
         </div>
       </aside>
+      <SidebarResizer
+        container={shellRef}
+        disabled={Boolean(settings || folderDialog || preview)}
+      />
       <div
         className="app-main"
         inert={
@@ -1378,9 +1383,14 @@ export function Workspace({
               id="folder-name"
               value={folderInput}
               onChange={(e) => setFolderInput(e.target.value)}
-              placeholder="例：仕事、アイデア、暮らし"
+              placeholder="例：仕事、memo/旅行"
+              aria-describedby="folder-name-hint"
               maxLength={80}
             />
+            <p id="folder-name-hint" className="folder-name-hint">
+              「memo/旅行」のように /
+              で区切ると、親フォルダの下にまとめて表示します。
+            </p>
             <button
               className="button primary full"
               disabled={!folderInput.trim()}
