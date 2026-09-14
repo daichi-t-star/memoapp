@@ -233,6 +233,7 @@ export function Workspace({
           return false;
         if (view.startsWith("tag:") && !n.tags.includes(view.slice(4)))
           return false;
+        if (!words.length) return true;
         const haystack = [
           n.title,
           n.text,
@@ -792,7 +793,7 @@ export function Workspace({
                     </div>
                     <h2>{n.title || "無題のメモ"}</h2>
                     <p className="note-excerpt">
-                      {n.text ||
+                      {n.text.slice(0, 300) ||
                         (n.attachments.length
                           ? "添付ファイルを保存したメモ"
                           : "ここから、思いつきを書きとめよう。")}
