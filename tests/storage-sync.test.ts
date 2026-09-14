@@ -51,11 +51,31 @@ class FakeRemote extends Remote {
     for (const f of files) {
       const sha = crypto.randomUUID();
       result.set(f.path, sha);
-      this.files.set(f.path, { sha, text: f.content });
+      this.files.set(f.path, {
+        sha,
+        text:
+          typeof f.content === "string" ? f.content : await base64(f.content),
+      });
     }
     return result;
   }
 }
+
+test("bulk synchronization publishes bounded batches and resumes remaining notes", async () => {
+  const s = scope(),
+    remote = new FakeRemote();
+  for (let i = 0; i < 85; i++)
+    await db.putNoteWithFiles({ ...newNote(s), title: `batch ${i}` }, []);
+  await synchronize(remote, s, () => {}, changed);
+  assert.equal((await db.allNotes(s)).filter(isPending).length, 45);
+  await synchronize(remote, s, () => {}, changed);
+  await synchronize(remote, s, () => {}, changed);
+  assert.equal((await db.allNotes(s)).filter(isPending).length, 0);
+  assert.deepEqual(
+    remote.commits.map((c) => c.length),
+    [40, 40, 5],
+  );
+});
 
 test("local note + binary persist together, scoped away from other repositories", async () => {
   const n = newNote(scope());

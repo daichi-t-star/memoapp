@@ -46,6 +46,7 @@ import { Remote, synchronize } from "./remote";
 import { AttachmentView } from "./AttachmentView";
 import { Settings } from "./Settings";
 import { download, exportBackup, importBackup } from "./backup";
+import { RichEditor, SourcePreview, type RichEditorHandle } from "./RichEditor";
 
 const viewNames: Record<string, string> = {
   all: "すべてのメモ",
@@ -193,6 +194,8 @@ export function Workspace({
   const fileInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const backupInput = useRef<HTMLInputElement>(null);
+  const richEditor = useRef<RichEditorHandle>(null);
+  const restoring = useRef(false);
   const composing = useRef(false);
   const pending = state.notes.filter(isPending).length;
   const note = state.notes.find((n) => n.id === selected);
@@ -276,6 +279,7 @@ export function Workspace({
   const sync = useCallback(async () => {
     if (
       !remote ||
+      restoring.current ||
       syncLock.current ||
       !navigator.onLine ||
       store.snapshot.loading ||
@@ -356,7 +360,8 @@ export function Workspace({
   ]);
   useEffect(() => {
     const before = (e: BeforeUnloadEvent) => {
-      if (store.snapshot.saving || store.snapshot.error) e.preventDefault();
+      if (store.snapshot.saving || store.snapshot.error || restoring.current)
+        e.preventDefault();
     };
     window.addEventListener("beforeunload", before);
     return () => window.removeEventListener("beforeunload", before);
@@ -409,13 +414,17 @@ export function Workspace({
     setSidebar(false);
     setMenu(false);
   }
-  async function attach(files: FileList | File[] | null) {
+  async function attach(files: FileList | File[] | null, inline = true) {
     if (!note || !files?.length) return;
     const id = note.id;
+    const targetEditor = richEditor.current;
     setAttaching(true);
     try {
-      await store.attach(id, Array.from(files));
+      const added = await store.attach(id, Array.from(files));
+      if (inline && added && richEditor.current === targetEditor)
+        targetEditor?.insertAttachments(added);
       setToast(`${files.length}個のファイルを添付しました`);
+      return added;
     } catch (e) {
       setToast((e as Error).message);
     } finally {
@@ -492,7 +501,7 @@ export function Workspace({
           <span>
             memo<span className="brand-dot">.</span>
           </span>
-          <span className="version">2.0</span>
+          <span className="version">3.0</span>
         </a>
         <button
           className="workspace-switch"
@@ -900,7 +909,7 @@ export function Workspace({
             <article
               className={`note-editor ${dragging ? "is-dragging" : ""}`}
               onDragOver={(e) => {
-                if (!note.deleted) {
+                if (!note.deleted && e.dataTransfer.types.includes("Files")) {
                   e.preventDefault();
                   setDragging(true);
                 }
@@ -1113,29 +1122,29 @@ export function Workspace({
                       />
                     )}
                   </div>
-                  <textarea
-                    className="body-input"
-                    aria-label="メモ本文"
-                    value={note.text}
-                    disabled={note.deleted}
-                    placeholder={
-                      "ここに、自由に書いてみましょう。\n\n書式のルールはありません。\n写真やファイルは、ここにドロップして添付できます。"
-                    }
-                    onChange={(e) => update({ text: e.target.value })}
-                    onCompositionStart={() => {
-                      composing.current = true;
+                  <RichEditor
+                    key={note.id}
+                    note={note}
+                    scope={scope}
+                    remote={remote}
+                    pending={store.pendingFiles}
+                    handle={richEditor}
+                    onChange={(content) => update({ content })}
+                    onFiles={(files) => attach(files, false)}
+                    onComposition={(active) => {
+                      composing.current = active;
                     }}
-                    onCompositionEnd={() => {
-                      composing.current = false;
-                    }}
-                    onPaste={(e) => {
-                      if (e.clipboardData.files.length) {
-                        e.preventDefault();
-                        void attach(e.clipboardData.files);
-                      }
-                    }}
+                    chooseImage={() => imageInput.current?.click()}
+                    chooseFile={() => fileInput.current?.click()}
                   />
-                  {links.length > 0 && (
+                  <SourcePreview
+                    key={`source:${note.id}`}
+                    note={note}
+                    scope={scope}
+                    remote={remote}
+                    pending={store.pendingFiles}
+                  />
+                  {note.version === 2 && links.length > 0 && (
                     <div className="note-links" aria-label="メモ内のリンク">
                       {links.map((url) => (
                         <a
@@ -1178,7 +1187,13 @@ export function Workspace({
                             remote={remote}
                             preview={(url, name) => setPreview({ url, name })}
                             remove={
-                              note.deleted
+                              note.deleted ||
+                              JSON.stringify(note.content || {}).includes(
+                                `"attachmentId":"${a.id}"`,
+                              ) ||
+                              note.sourceHtml?.includes(
+                                `data-attachment-id="${a.id}"`,
+                              )
                                 ? undefined
                                 : () =>
                                     update({
@@ -1279,18 +1294,38 @@ export function Workspace({
       <input
         type="file"
         hidden
-        accept="application/json,.json"
+        accept="application/json,application/x-ndjson,.json,.jsonl"
+        multiple
         ref={backupInput}
         onChange={async (e) => {
-          const f = e.target.files?.[0];
+          const files = Array.from(e.target.files || []);
           e.target.value = "";
-          if (!f) return;
+          if (!files.length) return;
+          restoring.current = true;
+          setToast("バックアップを復元しています…");
           try {
-            const count = await importBackup(f, scope);
+            await store.flush();
+            const restore = async () => {
+              let count = 0;
+              for (let i = 0; i < files.length; i++) {
+                setToast(
+                  `バックアップを復元しています ${i + 1} / ${files.length}`,
+                );
+                count += await importBackup(files[i], scope);
+              }
+              return count;
+            };
+            const count = navigator.locks
+              ? await navigator.locks.request(`memoapp-sync:${scope}`, restore)
+              : await restore();
             await store.refresh();
             setToast(`${count}件をコピーとして復元しました`);
           } catch (error) {
+            await store.refresh();
             setToast((error as Error).message);
+          } finally {
+            restoring.current = false;
+            void sync();
           }
         }}
       />

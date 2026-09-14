@@ -1,3 +1,5 @@
+import { validateContent, contentText, type RichContent } from "./richtext";
+
 export interface Attachment {
   id: string;
   name: string;
@@ -8,7 +10,7 @@ export interface Attachment {
 }
 
 export interface Note {
-  version: 2;
+  version: 2 | 3;
   id: string;
   title: string;
   text: string;
@@ -21,6 +23,9 @@ export interface Note {
   updatedAt: string;
   attachments: Attachment[];
   sourcePath?: string;
+  content?: RichContent;
+  sourceHtml?: string;
+  importKey?: string;
 }
 
 export interface StoredNote extends Note {
@@ -48,7 +53,7 @@ export const scopeOf = (c: Connection | null) =>
   c ? `${c.owner}/${c.repo}@${c.branch}` : "local";
 export const notePath = (id: string) => `.memoapp/notes/${id}.json`;
 export const isImage = (a: Attachment) =>
-  /^image\/(png|jpeg|gif|webp|avif|bmp)$/.test(a.type);
+  /^image\/(png|jpeg|gif|webp|avif|bmp|svg\+xml)$/.test(a.type);
 export const isPending = (n: StoredNote) => n.revision !== n.syncedRevision;
 export function newNote(scope: string, folder = ""): StoredNote {
   const now = new Date().toISOString();
@@ -78,7 +83,7 @@ export function validateNote(value: unknown): Note {
   const n = value as Note;
   if (
     !n ||
-    n.version !== 2 ||
+    ![2, 3].includes(n.version) ||
     !/^[a-zA-Z0-9_-]{1,100}$/.test(n.id) ||
     !["title", "text", "folder", "createdAt", "updatedAt"].every(
       (k) => typeof (n as unknown as Record<string, unknown>)[k] === "string",
@@ -91,7 +96,9 @@ export function validateNote(value: unknown): Note {
     !Array.isArray(n.attachments) ||
     !Number.isFinite(Date.parse(n.updatedAt)) ||
     !Number.isFinite(Date.parse(n.createdAt)) ||
-    (n.sourcePath !== undefined && typeof n.sourcePath !== "string")
+    (n.sourcePath !== undefined && typeof n.sourcePath !== "string") ||
+    (n.sourceHtml !== undefined && typeof n.sourceHtml !== "string") ||
+    (n.importKey !== undefined && !/^[a-zA-Z0-9:_-]{1,180}$/.test(n.importKey))
   )
     throw new Error(
       "メモの形式を確認できません。元のデータは変更していません。",
@@ -110,12 +117,16 @@ export function validateNote(value: unknown): Note {
     )
       throw new Error("添付ファイルの形式が正しくありません。");
   }
+  const content =
+    n.version === 3
+      ? validateContent(n.content, new Set(n.attachments.map((a) => a.id)))
+      : undefined;
   // Explicit projection: remote JSON must never supply local sync bookkeeping.
   return {
-    version: 2,
+    version: n.version,
     id: n.id,
     title: n.title,
-    text: n.text,
+    text: content ? contentText(content) : n.text,
     folder: n.folder,
     tags: n.tags,
     pinned: n.pinned,
@@ -132,6 +143,9 @@ export function validateNote(value: unknown): Note {
       external: !!a.external,
     })),
     sourcePath: n.sourcePath,
+    ...(content ? { content } : {}),
+    ...(n.sourceHtml !== undefined ? { sourceHtml: n.sourceHtml } : {}),
+    ...(n.importKey ? { importKey: n.importKey } : {}),
   };
 }
 export function mimeFor(path: string): string {

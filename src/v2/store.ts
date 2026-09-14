@@ -1,4 +1,5 @@
 import * as db from "./db";
+import { contentText, plainContent } from "./richtext";
 import {
   newNote,
   type StoredNote,
@@ -96,6 +97,10 @@ export class NoteStore {
   update(id: string, patch: Partial<Note>) {
     const current = this.snapshot.notes.find((n) => n.id === id);
     if (!current) return Promise.resolve();
+    if (patch.content)
+      patch = { ...patch, version: 3, text: contentText(patch.content) };
+    else if (patch.text !== undefined && current.version === 3)
+      patch = { ...patch, content: plainContent(patch.text) };
     return this.persist({
       ...current,
       ...patch,
@@ -134,6 +139,7 @@ export class NoteStore {
       files.map((f) => ({ path: f.attachment.path, blob: f.blob })),
     );
     navigator.storage?.persist?.().catch(() => {});
+    return files.map((f) => f.attachment);
   }
   async duplicate(id: string) {
     const n = this.snapshot.notes.find((n) => n.id === id);
@@ -143,10 +149,13 @@ export class NoteStore {
       ...newNote(this.scope, n.folder),
       title: `${n.title || "無題のメモ"}（コピー）`,
       text: n.text,
+      version: n.version,
+      content: n.content,
       tags: n.tags,
       attachments: n.attachments,
     };
     delete copy.sourcePath;
+    delete copy.importKey;
     delete copy.remoteSha;
     delete copy.legacySha;
     await this.persist(copy);

@@ -8,4 +8,4 @@ githubtoken
 .DS_Store
 .vscode/
 .obsidian/
-
+.migration/

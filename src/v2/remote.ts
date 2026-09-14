@@ -18,11 +18,17 @@ export class ApiError extends Error {
   }
 }
 export class Remote {
+  private lastWrite = 0;
   constructor(
     private token: string,
     public connection: Connection,
   ) {}
   async request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+    if (method !== "GET") {
+      const delay = Math.max(0, 1000 - (Date.now() - this.lastWrite));
+      if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+      this.lastWrite = Date.now();
+    }
     const response = await fetch(`https://api.github.com${path}`, {
       method,
       cache: "no-store",
@@ -103,7 +109,11 @@ export class Remote {
   async commit(
     head: string,
     baseTree: string,
-    files: { path: string; content: string; encoding: "utf-8" | "base64" }[],
+    files: {
+      path: string;
+      content: string | Blob;
+      encoding: "utf-8" | "base64";
+    }[],
   ) {
     const entries: { path: string; mode: string; type: string; sha: string }[] =
       [];
@@ -112,7 +122,13 @@ export class Remote {
       const blob = await this.request<{ sha: string }>(
         `${this.base()}/git/blobs`,
         "POST",
-        { content: file.content, encoding: file.encoding },
+        {
+          content:
+            typeof file.content === "string"
+              ? file.content
+              : await base64(file.content),
+          encoding: file.encoding,
+        },
       );
       entries.push({
         path: file.path,
@@ -170,13 +186,13 @@ export async function synchronize(
       /^\.memoapp\/notes\/[a-zA-Z0-9_-]+\.json$/.test(f.path),
   );
   let completed = 0;
-  for (const file of remoteNotes) {
+  async function receiveNote(file: (typeof remoteNotes)[number]) {
     const id = file.path
       .split("/")
       .pop()!
       .replace(/\.json$/, "");
     let existing = await db.getNote(scope, id);
-    if (existing?.remoteSha === file.sha) continue;
+    if (existing?.remoteSha === file.sha) return;
     const note = validateNote(
       JSON.parse(await (await remote.blob(file.path, tree.head)).text()),
     );
@@ -228,8 +244,18 @@ export async function synchronize(
         "編集中のメモがあります。入力が落ち着いてから同期してください。",
       );
     progress(`メモを取得しています ${++completed} / ${remoteNotes.length}`);
-    await changed();
+    if (completed % 10 === 0) await changed();
   }
+  let readIndex = 0;
+  const reads = await Promise.allSettled(
+    Array.from({ length: Math.min(3, remoteNotes.length) }, async () => {
+      while (readIndex < remoteNotes.length)
+        await receiveNote(remoteNotes[readIndex++]);
+    }),
+  );
+  if (completed) await changed();
+  const readFailure = reads.find((r) => r.status === "rejected");
+  if (readFailure?.status === "rejected") throw readFailure.reason;
   const current = await db.allNotes(scope);
   const migrated = new Set(
     current
@@ -311,11 +337,27 @@ export async function synchronize(
     );
     await changed();
   }
-  const pending = (await db.allNotes(scope)).filter(isPending);
-  if (!pending.length) return;
+  const waiting = (await db.allNotes(scope)).filter(isPending);
+  if (!waiting.length) return;
+  // Bound each publication. The workspace continues remaining batches after
+  // this one succeeds; retries first reconcile the current remote branch.
+  const pending: StoredNote[] = [];
+  let batchBytes = 0;
+  for (const note of waiting) {
+    const bytes = note.attachments
+      .filter((a) => !a.external && !remoteFiles.has(a.path))
+      .reduce((n, a) => n + a.size, 0);
+    if (
+      pending.length &&
+      (pending.length >= 40 || batchBytes + bytes > 16 * 1024 * 1024)
+    )
+      break;
+    pending.push(note);
+    batchBytes += bytes;
+  }
   const files: {
     path: string;
-    content: string;
+    content: string | Blob;
     encoding: "utf-8" | "base64";
   }[] = [];
   const included = new Set<string>();
@@ -335,7 +377,7 @@ export async function synchronize(
       progress(`添付ファイルを準備中：${attachment.name}`);
       files.push({
         path: attachment.path,
-        content: await base64(blob),
+        content: blob,
         encoding: "base64",
       });
       included.add(attachment.path);
