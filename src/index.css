@@ -294,6 +294,22 @@ textarea {
 .folder-nav {
   margin-bottom: 18px;
 }
+.folder-nav .nav-item {
+  height: auto;
+  min-height: 40px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.folder-nav .nav-item > span {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+.folder-nav .nav-item > svg,
+.folder-nav .nav-item > small {
+  flex-shrink: 0;
+}
 .add-folder {
   display: flex;
   align-items: center;

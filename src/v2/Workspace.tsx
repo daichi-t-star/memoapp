@@ -556,6 +556,7 @@ export function Workspace({
           {folders.map((folder, i) => (
             <button
               key={folder}
+              title={folder}
               className={`nav-item ${view === `folder:${folder}` ? "active" : ""}`}
               onClick={() => navigate(`folder:${folder}`)}
             >
